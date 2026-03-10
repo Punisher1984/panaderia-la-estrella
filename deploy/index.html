@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="La Estrella">
+<meta name="description" content="Sistema de pedidos online Panadería La Estrella">
+<meta name="theme-color" content="#7a1c2e">
+<link rel="manifest" href="data:application/manifest+json;base64,ewogICJuYW1lIjogIlBhbmFkZXLDrWEgTGEgRXN0cmVsbGEiLAogICJzaG9ydF9uYW1lIjogIkxhIEVzdHJlbGxhIiwKICAiZGVzY3JpcHRpb24iOiAiU2lzdGVtYSBkZSBwZWRpZG9zIG9ubGluZSBQYW5hZGVyw61hIExhIEVzdHJlbGxhIiwKICAic3RhcnRfdXJsIjogIi8iLAogICJkaXNwbGF5IjogInN0YW5kYWxvbmUiLAogICJiYWNrZ3JvdW5kX2NvbG9yIjogIiNmZGY4ZWUiLAogICJ0aGVtZV9jb2xvciI6ICIjN2ExYzJlIiwKICAib3JpZW50YXRpb24iOiAicG9ydHJhaXQtcHJpbWFyeSIsCiAgImljb25zIjogWwogICAgeyJzcmMiOiAiL2ljb24tMTkyLnBuZyIsICJzaXplcyI6ICIxOTJ4MTkyIiwgInR5cGUiOiAiaW1hZ2UvcG5nIiwgInB1cnBvc2UiOiAiYW55IG1hc2thYmxlIn0sCiAgICB7InNyYyI6ICIvaWNvbi01MTIucG5nIiwgInNpemVzIjogIjUxMng1MTIiLCAidHlwZSI6ICJpbWFnZS9wbmciLCAicHVycG9zZSI6ICJhbnkgbWFza2FibGUifQogIF0KfQ==">
+<title>Panadería La Estrella</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{font-family:Georgia,serif;background:#fdf8ee;min-height:100vh;}
+button,input,select,textarea{font-family:Georgia,serif;}
+.fade{animation:fadeIn 0.3s ease;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.spin{animation:spin 1s linear infinite;display:inline-block;}
+::-webkit-scrollbar{width:4px;} ::-webkit-scrollbar-thumb{background:#d4a04a;border-radius:4px;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<!-- Firebase v9 compat (funciona sin bundler) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+<script>
+// Inicializar Firebase ANTES de React
+const firebaseConfig = {
+  apiKey: "AIzaSyAvCWG41g_PdnVOW1EMII8IR9Mg3vbwWVI",
+  authDomain: "panaderia-la-estrella.firebaseapp.com",
+  projectId: "panaderia-la-estrella",
+  storageBucket: "panaderia-la-estrella.firebasestorage.app",
+  messagingSenderId: "830272917897",
+  appId: "1:830272917897:web:5eeb09fbbb2afc6d5d5158"
+};
+firebase.initializeApp(firebaseConfig);
+const firestore = firebase.firestore();
+</script>
+
+<script type="text/babel">
+const {useState, useEffect, useRef, useCallback} = React;
+
+// ═══════════════════════════════════════════════
+// FIREBASE DB HELPERS
+// ═══════════════════════════════════════════════
+const Col = {
+  clientes:  "clientes",
+  pedidos:   "pedidos",
+  productos: "productos",
+  gastos:    "gastos",
+  config:    "config",
+  notifs:    "notifs",
+};
+
+// Escuchar colección en tiempo real
+function useCollection(colName) {
+  const [docs, setDocs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const unsub = firestore.collection(colName)
+      .orderBy("_ts", "desc")
+      .onSnapshot(snap => {
+        setDocs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      }, () => setLoading(false));
+    return unsub;
+  }, [colName]);
+  return [docs, loading];
+}
+
+// Escuchar documento único
+function useDoc(colName, docId) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (!docId) return;
+    const unsub = firestore.collection(colName).doc(docId)
+      .onSnapshot(snap => {
+        setData(snap.exists ? snap.data() : null);
+        setLoading(false);
+      }, () => setLoading(false));
+    return unsub;
+  }, [colName, docId]);
+  return [data, loading];
+}
+
+// CRUD helpers
+const fsAdd    = (col, data)     => firestore.collection(col).add({ ...data, _ts: firebase.firestore.FieldValue.serverTimestamp() });
+const fsSet    = (col, id, data) => firestore.collection(col).doc(id).set({ ...data, _ts: firebase.firestore.FieldValue.serverTimestamp() });
+const fsUpdate = (col, id, data) => firestore.collection(col).doc(id).update(data);
+const fsDelete = (col, id)       => firestore.collection(col).doc(id).delete();
+const fsGet    = (col, id)       => firestore.collection(col).doc(id).get();
+
+// ═══════════════════════════════════════════════
+// PRODUCTOS DEFAULT (solo si Firestore vacío)
+// ═══════════════════════════════════════════════
+const PRODUCTOS_DEFAULT = [
+  {id:"hallulla",    nombre:"Hallulla",      precio:150,  unidad:"kilo",   activo:true},
+  {id:"marraqueta",  nombre:"Marraqueta",    precio:150,  unidad:"kilo",   activo:true},
+  {id:"completo",    nombre:"Completo",      precio:1500, unidad:"unidad", activo:true},
+  {id:"hamburguesa", nombre:"Hamburguesa",   precio:2500, unidad:"unidad", activo:true},
+  {id:"empanada",    nombre:"Masa Empanada", precio:800,  unidad:"unidad", activo:true},
+];
+
+const CONFIG_DEFAULT = {
+  horario:    "Lunes a Sábado 7:00 - 20:00",
+  bienvenida: "¡Bienvenido! Haz tu pedido y te lo llevamos.",
+  telefono:   "",
+  adminPass:  "1234",
+  logoUrl:    null
+};
+
+const ESTADOS = {
+  pendiente:  {label:"Pendiente",  color:"#f5c800", txt:"#7a4f00", icon:"⏳"},
+  preparando: {label:"Preparando", color:"#e8820a", txt:"#fff",    icon:"👨‍🍳"},
+  camino:     {label:"En camino",  color:"#3182ce", txt:"#fff",    icon:"🛵"},
+  recibido:   {label:"Recibido",   color:"#38a169", txt:"#fff",    icon:"✅"},
+  cancelado:  {label:"Cancelado",  color:"#e53e3e", txt:"#fff",    icon:"✕"},
+};
+
+// ═══════════════════════════════════════════════
+// LOGO SVG
+// ═══════════════════════════════════════════════
+const LOGO_DEFAULT = "data:image/jpeg;base64,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";
+
+function Logo({size=60, logoUrl=null}) {
+  const src = logoUrl || LOGO_DEFAULT;
+  return (
+    <img src={src} style={{width:size,height:size,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>
+  );
+  return (
+    <svg width={size} height={size} viewBox="0 0 200 200">
+      <circle cx="100" cy="100" r="100" fill="#f5c800"/>
+      <ellipse cx="62" cy="108" rx="32" ry="17" fill="none" stroke="#7a1c2e" strokeWidth="3.5" strokeLinecap="round"/>
+      <path d="M34 104 Q55 88 78 93 Q90 96 94 108" fill="none" stroke="#7a1c2e" strokeWidth="3" strokeLinecap="round"/>
+      <line x1="46" y1="108" x2="50" y2="99" stroke="#7a1c2e" strokeWidth="2.5" strokeLinecap="round"/>
+      <line x1="58" y1="112" x2="62" y2="102" stroke="#7a1c2e" strokeWidth="2.5" strokeLinecap="round"/>
+      <polygon points="100,58 108,82 134,82 113,97 121,121 100,106 79,121 87,97 66,82 92,82"
+        fill="#d4a017" stroke="#7a1c2e" strokeWidth="3" strokeLinejoin="round"/>
+      <line x1="128" y1="96" x2="160" y2="72" stroke="#7a1c2e" strokeWidth="3" strokeLinecap="round"/>
+      {[0,1,2,3,4,5].map(i=>{const t=i/5,x=128+t*32,y=96-t*24;return <g key={i}>
+        <ellipse cx={x-7} cy={y+4} rx="7" ry="4" fill="none" stroke="#7a1c2e" strokeWidth="2.2" transform={`rotate(-38,${x-7},${y+4})`}/>
+        <ellipse cx={x+5} cy={y-3} rx="7" ry="4" fill="none" stroke="#7a1c2e" strokeWidth="2.2" transform={`rotate(38,${x+5},${y-3})`}/>
+      </g>;})}
+      <text x="100" y="153" textAnchor="middle" fontFamily="'Arial Black',Georgia,serif"
+        fontWeight="900" fontSize="21" fill="#7a1c2e" letterSpacing="2.5">LA ESTRELLA</text>
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// ILUSTRACIONES PRODUCTOS
+// ═══════════════════════════════════════════════
+function ImgHallulla(){return <svg viewBox="0 0 120 80" width="100%" height="75"><ellipse cx="60" cy="52" rx="48" ry="22" fill="#d4952a"/><ellipse cx="60" cy="46" rx="44" ry="18" fill="#e8b84a"/><ellipse cx="60" cy="42" rx="38" ry="14" fill="#f5d080"/><path d="M28 44 Q60 28 92 44" fill="none" stroke="#b07020" strokeWidth="2.5" strokeLinecap="round"/><ellipse cx="60" cy="41" rx="13" ry="5" fill="none" stroke="#b07020" strokeWidth="1.5"/></svg>;}
+function ImgMarraqueta(){return <svg viewBox="0 0 120 80" width="100%" height="75"><ellipse cx="60" cy="52" rx="50" ry="20" fill="#b8720a"/><ellipse cx="60" cy="46" rx="46" ry="17" fill="#d4922a"/><ellipse cx="60" cy="41" rx="42" ry="13" fill="#eeaa40"/><ellipse cx="60" cy="38" rx="38" ry="10" fill="#f5c860"/><path d="M18 46 Q60 28 102 46" fill="none" stroke="#8a5010" strokeWidth="2.5" strokeLinecap="round"/><line x1="32" y1="41" x2="36" y2="31" stroke="#8a5010" strokeWidth="2" strokeLinecap="round"/><line x1="48" y1="36" x2="52" y2="26" stroke="#8a5010" strokeWidth="2" strokeLinecap="round"/><line x1="68" y1="34" x2="72" y2="24" stroke="#8a5010" strokeWidth="2" strokeLinecap="round"/><line x1="84" y1="36" x2="88" y2="26" stroke="#8a5010" strokeWidth="2" strokeLinecap="round"/></svg>;}
+function ImgCompleto(){return <svg viewBox="0 0 120 90" width="100%" height="80"><ellipse cx="60" cy="70" rx="48" ry="14" fill="#b8720a"/><ellipse cx="60" cy="58" rx="46" ry="9" fill="#4a8e30"/><ellipse cx="38" cy="55" rx="11" ry="6" fill="#cc2a18"/><ellipse cx="60" cy="54" rx="11" ry="6" fill="#dd3020"/><ellipse cx="82" cy="55" rx="11" ry="6" fill="#cc2a18"/><ellipse cx="60" cy="46" rx="40" ry="8" fill="#d86040"/><path d="M20 40 Q40 34 60 37 Q80 40 100 35" fill="none" stroke="#e8d018" strokeWidth="3.5" strokeLinecap="round"/><ellipse cx="60" cy="34" rx="46" ry="17" fill="#eeaa40"/><ellipse cx="60" cy="26" rx="38" ry="10" fill="#f8d880"/></svg>;}
+function ImgHamburguesa(){return <svg viewBox="0 0 120 92" width="100%" height="80"><ellipse cx="60" cy="72" rx="48" ry="13" fill="#b8720a"/><ellipse cx="60" cy="60" rx="46" ry="8" fill="#4a8e30"/><ellipse cx="60" cy="56" rx="11" ry="5" fill="#ee3828"/><ellipse cx="60" cy="51" rx="44" ry="10" fill="#f0c050"/><ellipse cx="60" cy="43" rx="40" ry="8" fill="#8a4820"/><ellipse cx="60" cy="38" rx="46" ry="13" fill="#eeaa40"/><ellipse cx="60" cy="28" rx="40" ry="9" fill="#f8d880"/><circle cx="44" cy="27" r="2.5" fill="#d4a020" opacity="0.5"/><circle cx="60" cy="25" r="2.5" fill="#d4a020" opacity="0.5"/><circle cx="76" cy="27" r="2.5" fill="#d4a020" opacity="0.5"/></svg>;}
+function ImgEmpanada(){return <svg viewBox="0 0 120 88" width="100%" height="80"><path d="M14 78 Q60 10 106 78 Z" fill="#d4922a"/><path d="M16 78 Q60 14 104 78" fill="#eeaa40"/>{[0,1,2,3,4,5,6,7,8].map(i=>{const t=i/8,x=14+t*92,cy=78-Math.sin(Math.PI*t)*68;return <circle key={i} cx={x} cy={cy+2} r="4" fill="#b07020"/>;})}<ellipse cx="60" cy="58" rx="22" ry="12" fill="#c48030" opacity="0.35"/></svg>;}
+const IMGS = {hallulla:<ImgHallulla/>,marraqueta:<ImgMarraqueta/>,completo:<ImgCompleto/>,hamburguesa:<ImgHamburguesa/>,empanada:<ImgEmpanada/>};
+
+// ═══════════════════════════════════════════════
+// ESTILOS BASE
+// ═══════════════════════════════════════════════
+const S = {
+  btn:(bg="#7a1c2e",color="#fff",extra={})=>({background:bg,color,border:"none",borderRadius:12,
+    padding:"12px 18px",fontSize:15,cursor:"pointer",width:"100%",fontFamily:"Georgia,serif",fontWeight:"bold",...extra}),
+  input:{width:"100%",padding:"11px 14px",borderRadius:11,border:"2px solid #f5c800",fontSize:14,
+    background:"#fffdf0",boxSizing:"border-box",fontFamily:"Georgia,serif",outline:"none",color:"#3a1a08"},
+  card:{background:"#fff",borderRadius:14,boxShadow:"0 2px 10px rgba(0,0,0,0.08)",marginBottom:10,overflow:"hidden"},
+  tag:(color,txt="#fff")=>({background:color,color:txt,borderRadius:7,padding:"3px 10px",fontSize:11,
+    fontWeight:"bold",display:"inline-flex",alignItems:"center",gap:3}),
+};
+
+// ═══════════════════════════════════════════════
+// SPINNER
+// ═══════════════════════════════════════════════
+function Spinner({msg="Cargando..."}) {
+  return (
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",
+      justifyContent:"center",background:"linear-gradient(160deg,#1a0a04,#7a1c2e 50%,#c49a20)",gap:16}}>
+      <Logo size={80}/>
+      <div style={{color:"#f5c800",fontSize:22}} className="spin">⭐</div>
+      <p style={{color:"#fff",fontSize:14,opacity:0.8}}>{msg}</p>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// APP PRINCIPAL
+// ═══════════════════════════════════════════════
+window.__logoUrl = null;
+
+function App() {
+  const [vista, setVista] = useState("login");
+  const [clienteActivo, setClienteActivo] = useState(null);
+  const [inicializado, setInicializado] = useState(false);
+
+  // Escuchar datos en tiempo real
+  const [clientes,  loadingC] = useCollection(Col.clientes);
+  const [pedidos,   loadingP] = useCollection(Col.pedidos);
+  const [productos, loadingPr]= useCollection(Col.productos);
+  const [notifs,    loadingN] = useCollection(Col.notifs);
+  const [gastos,    loadingG] = useCollection(Col.gastos);
+
+  // Config como doc único
+  const [configData, loadingCfg] = useDoc(Col.config, "main");
+  const config = configData || CONFIG_DEFAULT;
+  // Sincronizar logo global al cargar
+  useEffect(()=>{ window.__logoUrl = config.logoUrl || null; }, [config.logoUrl]);
+
+  const loading = loadingC || loadingP || loadingPr || loadingCfg;
+
+  // Inicializar datos por defecto si Firestore está vacío
+  useEffect(() => {
+    if (inicializado) return;
+    if (loadingPr || loadingCfg) return;
+    setInicializado(true);
+
+    // Productos por defecto
+    if (productos.length === 0) {
+      PRODUCTOS_DEFAULT.forEach(p => fsSet(Col.productos, p.id, p));
+    }
+    // Config por defecto
+    if (!configData) {
+      fsSet(Col.config, "main", CONFIG_DEFAULT);
+    }
+  }, [loadingPr, loadingCfg, inicializado]);
+
+  if (loading) return <Spinner msg="Conectando con la nube..." />;
+
+  // Helpers de guardado
+  const save = {
+    agregarCliente: async (c) => { await fsSet(Col.clientes, c.rut.replace(/\D/g,""), c); },
+    actualizarCliente: async (id, data) => { await fsUpdate(Col.clientes, id, data); },
+    eliminarCliente: async (id) => { await fsDelete(Col.clientes, id); },
+    agregarProducto: async (p) => { await fsSet(Col.productos, p.id, p); },
+    actualizarProducto: async (id, data) => { await fsUpdate(Col.productos, id, data); },
+    eliminarProducto: async (id) => { await fsDelete(Col.productos, id); },
+    agregarGasto: async (g) => { await fsAdd(Col.gastos, g); },
+    eliminarGasto: async (id) => { await fsDelete(Col.gastos, id); },
+    actualizarConfig: async (data) => { await fsSet(Col.config, "main", data); },
+    marcarNotifLeida: async (id) => { await fsUpdate(Col.notifs, id, {leida: true}); },
+    marcarTodasLeidas: async () => {
+      const batch = firestore.batch();
+      notifs.filter(n=>!n.leida).forEach(n => {
+        batch.update(firestore.collection(Col.notifs).doc(n.id), {leida: true});
+      });
+      await batch.commit();
+    },
+  };
+
+  const agregarPedido = async (items, comentario, horaEntrega) => {
+    const pedidoId = Date.now().toString();
+    const nuevo = {
+      clienteId: clienteActivo.id,
+      clienteNombre: clienteActivo.nombre,
+      clienteDireccion: clienteActivo.direccion || "",
+      items, comentario, horaEntrega,
+      fecha: new Date().toISOString(),
+      estado: "pendiente",
+      total: items.reduce((s,i)=>s+i.subtotal,0),
+    };
+    await fsSet(Col.pedidos, pedidoId, nuevo);
+    await fsAdd(Col.notifs, {
+      tipo: "nuevo_pedido", pedidoId,
+      clienteId: clienteActivo.id,
+      clienteNombre: clienteActivo.nombre,
+      items, leida: false,
+      fecha: new Date().toISOString(),
+    });
+  };
+
+  const cambiarEstado = async (id, estado) => {
+    await fsUpdate(Col.pedidos, id, { estado });
+    if (estado === "camino") {
+      const p = pedidos.find(x=>x.id===id);
+      await fsAdd(Col.notifs, {
+        tipo: "camino", pedidoId: id,
+        clienteId: p.clienteId,
+        clienteNombre: p.clienteNombre,
+        leida: false,
+        fecha: new Date().toISOString(),
+      });
+    }
+  };
+
+  return (
+    <div style={{fontFamily:"Georgia,serif",minHeight:"100vh",background:"#fdf8ee"}}>
+      {vista==="login" && (
+        <Login config={config} clientes={clientes}
+          onAdmin={()=>setVista("admin")}
+          onCliente={c=>{setClienteActivo(c);setVista("cliente");}}/>
+      )}
+      {vista==="admin" && (
+        <Admin clientes={clientes} pedidos={pedidos} productos={productos}
+          notifs={notifs} gastos={gastos} config={config} save={save}
+          cambiarEstado={cambiarEstado} onLogout={()=>setVista("login")}/>
+      )}
+      {vista==="cliente" && clienteActivo && (
+        <Cliente
+          cliente={clienteActivo}
+          productos={productos}
+          config={config}
+          pedidos={pedidos.filter(p=>p.clienteId===clienteActivo.id)}
+          notifs={notifs.filter(n=>n.clienteId===clienteActivo.id && !n.leida)}
+          onPedido={agregarPedido}
+          onConfirmarRecibido={id=>cambiarEstado(id,"recibido")}
+          onMarcarNotifLeida={save.marcarNotifLeida}
+          onLogout={()=>setVista("login")}/>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// LOGIN
+// ═══════════════════════════════════════════════
+function Login({config, clientes, onAdmin, onCliente}) {
+  const [modo,setModo]=useState(null);
+  const [pass,setPass]=useState("");
+  const [rut,setRut]=useState("");
+  const [err,setErr]=useState("");
+
+  const loginAdmin = () => {
+    if (pass === config.adminPass) onAdmin();
+    else setErr("Contraseña incorrecta");
+  };
+  const loginCliente = () => {
+    const c = clientes.find(x =>
+      x.rut?.replace(/\D/g,"") === rut.replace(/\D/g,"") ||
+      x.telefono === rut
+    );
+    if (c) onCliente(c);
+    else setErr("No encontrado. Contacta a la panadería.");
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a0a04,#7a1c2e 50%,#c49a20)",
+      display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"#fff",borderRadius:26,padding:32,width:"100%",maxWidth:360,
+        boxShadow:"0 28px 70px rgba(0,0,0,0.45)",textAlign:"center"}} className="fade">
+        <Logo size={100} logoUrl={config.logoUrl}/>
+        <h1 style={{color:"#7a1c2e",fontSize:20,margin:"10px 0 3px"}}>Panadería La Estrella</h1>
+        <p style={{color:"#c49a20",fontSize:12,margin:"0 0 6px"}}>{config.horario}</p>
+        <p style={{color:"#888",fontSize:12,margin:"0 0 24px",fontStyle:"italic"}}>"{config.bienvenida}"</p>
+
+        {!modo && <>
+          <button onClick={()=>setModo("cliente")} style={{...S.btn("#f5c800","#7a1c2e"),marginBottom:10,fontSize:16,padding:16}}>
+            🛒 Hacer mi Pedido
+          </button>
+          <button onClick={()=>setModo("admin")} style={S.btn("#7a1c2e")}>⚙️ Administrador</button>
+        </>}
+
+        {modo==="admin" && <>
+          <p style={{color:"#7a1c2e",fontWeight:"bold",margin:"0 0 12px"}}>Contraseña</p>
+          <input type="password" placeholder="••••••" value={pass}
+            onChange={e=>setPass(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&loginAdmin()}
+            style={S.input}/>
+          {err&&<p style={{color:"#e53e3e",fontSize:12,margin:"6px 0"}}>{err}</p>}
+          <button onClick={loginAdmin} style={{...S.btn(),marginTop:10}}>Entrar →</button>
+          <button onClick={()=>{setModo(null);setErr("");setPass("");}}
+            style={{...S.btn("#eee","#666"),marginTop:8,fontSize:13}}>← Volver</button>
+        </>}
+
+        {modo==="cliente" && <>
+          <p style={{color:"#7a1c2e",fontWeight:"bold",margin:"0 0 12px"}}>Ingresa tu RUT o teléfono</p>
+          <input placeholder="Ej: 12.345.678-9" value={rut}
+            onChange={e=>setRut(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&loginCliente()}
+            style={S.input}/>
+          {err&&<p style={{color:"#e53e3e",fontSize:12,margin:"6px 0"}}>{err}</p>}
+          <button onClick={loginCliente}
+            style={{...S.btn("#f5c800","#7a1c2e"),marginTop:10,fontSize:15,padding:14}}>Ver Productos →</button>
+          <button onClick={()=>{setModo(null);setErr("");setRut("");}}
+            style={{...S.btn("#eee","#666"),marginTop:8,fontSize:13}}>← Volver</button>
+        </>}
+
+        <div style={{marginTop:16,padding:"8px 12px",background:"#f0fff4",borderRadius:8,
+          fontSize:11,color:"#2d7a4f",display:"flex",alignItems:"center",gap:6,justifyContent:"center"}}>
+          <span>🔥</span> Conectado en tiempo real
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// HEADER
+// ═══════════════════════════════════════════════
+function Header({titulo,sub,onLogout,badge=0}) {
+  return (
+    <div style={{background:"linear-gradient(90deg,#7a1c2e,#a02840)",color:"#fff",
+      padding:"11px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",
+      boxShadow:"0 3px 12px rgba(0,0,0,0.25)",position:"sticky",top:0,zIndex:100}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <Logo size={40} logoUrl={window.__logoUrl}/>
+        <div>
+          <div style={{fontSize:15,fontWeight:"bold"}}>{titulo}</div>
+          <div style={{fontSize:10,opacity:0.75}}>{sub}</div>
+        </div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        {badge>0&&<span style={{background:"#e53e3e",color:"#fff",borderRadius:"50%",
+          width:22,height:22,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"bold"}}>{badge}</span>}
+        <button onClick={onLogout} style={{background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.3)",
+          color:"#fff",borderRadius:8,padding:"6px 13px",cursor:"pointer",fontSize:12,fontFamily:"Georgia,serif"}}>Salir</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// ADMIN
+// ═══════════════════════════════════════════════
+function Admin({clientes,pedidos,productos,notifs,gastos,config,save,cambiarEstado,onLogout}) {
+  const [tab,setTab]=useState("pedidos");
+  const nl=notifs.filter(n=>!n.leida&&n.tipo==="nuevo_pedido").length;
+
+  const tabs=[
+    {id:"pedidos",   icon:"📋",label:"Pedidos",   badge:nl},
+    {id:"clientes",  icon:"👥",label:"Clientes"},
+    {id:"productos", icon:"🛍",label:"Productos"},
+    {id:"caja",      icon:"💰",label:"Caja"},
+    {id:"reportes",  icon:"📊",label:"Reportes"},
+    {id:"ajustes",   icon:"⚙️",label:"Ajustes"},
+  ];
+
+  return (
+    <div style={{minHeight:"100vh",background:"#f5f0e8"}}>
+      <Header titulo="Panel Admin" sub="Panadería La Estrella" onLogout={onLogout}/>
+      <div style={{display:"flex",background:"#fff",borderBottom:"3px solid #f5c800",
+        overflowX:"auto",position:"sticky",top:62,zIndex:99,boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:"0 0 auto",padding:"11px 13px",
+            border:"none",background:"transparent",
+            borderBottom:tab===t.id?"3px solid #7a1c2e":"3px solid transparent",
+            color:tab===t.id?"#7a1c2e":"#999",fontWeight:tab===t.id?"bold":"normal",
+            cursor:"pointer",fontSize:11,position:"relative",whiteSpace:"nowrap",fontFamily:"Georgia,serif"}}>
+            {t.icon} {t.label}
+            {t.badge>0&&<span style={{position:"absolute",top:5,right:2,background:"#e53e3e",color:"#fff",
+              borderRadius:"50%",width:17,height:17,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center"}}>{t.badge}</span>}
+          </button>
+        ))}
+      </div>
+      <div style={{padding:14,maxWidth:700,margin:"0 auto"}}>
+        {tab==="pedidos"   && <TabPedidos pedidos={pedidos} notifs={notifs} save={save} cambiarEstado={cambiarEstado}/>}
+        {tab==="clientes"  && <TabClientes clientes={clientes} pedidos={pedidos} save={save}/>}
+        {tab==="productos" && <TabProductos productos={productos} save={save}/>}
+        {tab==="caja"      && <TabCaja pedidos={pedidos} gastos={gastos} save={save}/>}
+        {tab==="reportes"  && <TabReportes pedidos={pedidos} clientes={clientes}/>}
+        {tab==="ajustes"   && <TabAjustes config={config} save={save}/>}
+      </div>
+    </div>
+  );
+}
+
+// ─── TAB PEDIDOS ────────────────────────────────
+function TabPedidos({pedidos,notifs,save,cambiarEstado}) {
+  const [filtro,setFiltro]=useState("todos");
+  const nuevos=notifs.filter(n=>!n.leida&&n.tipo==="nuevo_pedido");
+
+  const pedidosFiltrados = filtro==="todos" ? pedidos
+    : pedidos.filter(p=>p.estado===filtro);
+
+  const sig = {pendiente:"preparando",preparando:"camino"};
+
+  const eliminarPedido = async (id) => {
+    if (confirm("¿Eliminar este pedido? No se puede deshacer.")) {
+      await fsDelete(Col.pedidos, id);
+    }
+  };
+
+  return (
+    <div>
+      {nuevos.length>0&&(
+        <div style={{background:"#fff8dc",border:"2px solid #f5c800",borderRadius:14,padding:14,marginBottom:14}} className="fade">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <strong style={{color:"#7a4f00",fontSize:14}}>🔔 {nuevos.length} pedido(s) nuevo(s)</strong>
+            <button onClick={save.marcarTodasLeidas}
+              style={{...S.btn("#7a1c2e",undefined,{width:"auto",padding:"5px 12px",fontSize:12})}}>✓ Leído</button>
+          </div>
+          {nuevos.map(n=>(
+            <div key={n.id} style={{background:"#fff",borderRadius:9,padding:10,marginBottom:5,borderLeft:"4px solid #f5c800"}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <strong style={{fontSize:13}}>{n.clienteNombre}</strong>
+                <span style={{fontSize:11,color:"#aaa"}}>{new Date(n.fecha).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"})}</span>
+              </div>
+              <div style={{fontSize:12,color:"#666",marginTop:3}}>
+                {n.items?.map(i=>`${i.nombre} x${i.cantidad}`).join(", ")}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{display:"flex",gap:6,marginBottom:14,overflowX:"auto",paddingBottom:4}}>
+        {["todos","pendiente","preparando","camino","recibido","cancelado"].map(f=>(
+          <button key={f} onClick={()=>setFiltro(f)} style={{
+            flex:"0 0 auto",padding:"6px 12px",borderRadius:20,border:"none",
+            background:filtro===f?"#7a1c2e":"#eee",
+            color:filtro===f?"#fff":"#666",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif",
+            fontWeight:filtro===f?"bold":"normal"}}>
+            {f==="todos"?"Todos":(ESTADOS[f]?.icon+" "+ESTADOS[f]?.label)}
+          </button>
+        ))}
+      </div>
+
+      {pedidosFiltrados.length===0 && (
+        <div style={{textAlign:"center",color:"#bbb",padding:40,fontSize:14}}>
+          No hay pedidos{filtro!=="todos"?" en este estado":""}
+        </div>
+      )}
+
+      {pedidosFiltrados.map(p=>{
+        const est=ESTADOS[p.estado]||ESTADOS.pendiente;
+        return (
+          <div key={p.id} style={S.card} className="fade">
+            <div style={{background:est.color,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:est.txt,fontWeight:"bold",fontSize:13}}>{est.icon} {est.label}</span>
+              <span style={{color:est.txt,fontSize:11,opacity:0.85}}>
+                {new Date(p.fecha).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}
+              </span>
+            </div>
+            <div style={{padding:"12px 14px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                <strong style={{fontSize:14,color:"#3a1a08"}}>{p.clienteNombre}</strong>
+                <strong style={{color:"#7a1c2e",fontSize:14}}>${p.total?.toLocaleString("es-CL")}</strong>
+              </div>
+              {p.clienteDireccion&&<div style={{fontSize:12,color:"#888",marginBottom:4}}>📍 {p.clienteDireccion}</div>}
+              {p.horaEntrega&&<div style={{fontSize:12,color:"#e8820a",marginBottom:4}}>🕐 Entrega: {p.horaEntrega}</div>}
+              <div style={{fontSize:12,color:"#555",marginBottom:8}}>
+                {p.items?.map((i,idx)=>(
+                  <span key={idx} style={{display:"inline-block",background:"#fdf8ee",borderRadius:6,
+                    padding:"2px 8px",margin:"2px",border:"1px solid #f5c800"}}>
+                    {i.nombre} ×{i.cantidad}
+                  </span>
+                ))}
+              </div>
+              {p.comentario&&<div style={{fontSize:12,color:"#888",fontStyle:"italic",marginBottom:8}}>
+                💬 "{p.comentario}"</div>}
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {sig[p.estado]&&(
+                  <button onClick={()=>cambiarEstado(p.id,sig[p.estado])}
+                    style={{...S.btn(ESTADOS[sig[p.estado]].color,ESTADOS[sig[p.estado]].txt,
+                      {width:"auto",padding:"7px 14px",fontSize:12})}}>
+                    {ESTADOS[sig[p.estado]].icon} {ESTADOS[sig[p.estado]].label}
+                  </button>
+                )}
+                {p.estado!=="cancelado"&&p.estado!=="recibido"&&(
+                  <button onClick={()=>cambiarEstado(p.id,"cancelado")}
+                    style={{...S.btn("#e53e3e",undefined,{width:"auto",padding:"7px 14px",fontSize:12})}}>
+                    ✕ Cancelar
+                  </button>
+                )}
+                <button onClick={()=>eliminarPedido(p.id)}
+                  style={{...S.btn("#666",undefined,{width:"auto",padding:"7px 14px",fontSize:12})}}>
+                  🗑 Eliminar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── TAB CLIENTES ────────────────────────────────
+function TabClientes({clientes,pedidos,save}) {
+  const [form,setForm]=useState(null);
+  const [buscar,setBuscar]=useState("");
+  const empty={nombre:"",rut:"",telefono:"",direccion:""};
+
+  const filtrados = clientes.filter(c=>
+    c.nombre?.toLowerCase().includes(buscar.toLowerCase()) ||
+    c.rut?.includes(buscar) ||
+    c.telefono?.includes(buscar)
+  );
+
+  const guardar = async () => {
+    if (!form.nombre || !form.rut) return alert("Nombre y RUT son obligatorios");
+    await save.agregarCliente({...form, _ts: null});
+    setForm(null);
+  };
+
+  return (
+    <div>
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        <input value={buscar} onChange={e=>setBuscar(e.target.value)}
+          placeholder="🔍 Buscar cliente..." style={{...S.input,flex:1}}/>
+        <button onClick={()=>setForm(empty)}
+          style={{...S.btn("#f5c800","#7a1c2e",{width:"auto",padding:"11px 16px",fontSize:13,whiteSpace:"nowrap"})}}>
+          + Agregar
+        </button>
+      </div>
+
+      {form && (
+        <div style={{...S.card,padding:16,marginBottom:14,border:"2px solid #f5c800"}} className="fade">
+          <strong style={{display:"block",marginBottom:12,color:"#7a1c2e"}}>
+            {form.rut ? "Editar Cliente" : "Nuevo Cliente"}
+          </strong>
+          {[["nombre","Nombre completo"],["rut","RUT (ej: 12.345.678-9)"],
+            ["telefono","Teléfono"],["direccion","Dirección"]].map(([k,lbl])=>(
+            <input key={k} placeholder={lbl} value={form[k]||""}
+              onChange={e=>setForm({...form,[k]:e.target.value})}
+              style={{...S.input,marginBottom:8}}/>
+          ))}
+          <div style={{display:"flex",gap:8,marginTop:4}}>
+            <button onClick={guardar} style={S.btn()}>💾 Guardar</button>
+            <button onClick={()=>setForm(null)} style={S.btn("#eee","#666")}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {filtrados.length===0&&<div style={{textAlign:"center",color:"#bbb",padding:32}}>Sin clientes</div>}
+
+      {filtrados.map(c=>{
+        const nPedidos=pedidos.filter(p=>p.clienteId===c.id).length;
+        return (
+          <div key={c.id} style={S.card}>
+            <div style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <strong style={{fontSize:14,color:"#3a1a08"}}>{c.nombre}</strong>
+                <div style={{fontSize:12,color:"#888",marginTop:2}}>
+                  {c.rut} {c.telefono&&`· 📞 ${c.telefono}`}
+                </div>
+                {c.direccion&&<div style={{fontSize:12,color:"#888"}}>📍 {c.direccion}</div>}
+                <div style={{marginTop:4}}>
+                  <span style={S.tag("#f5c800","#7a4f00")}>{nPedidos} pedido(s)</span>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>setForm({...c})}
+                  style={{...S.btn("#f5c800","#7a1c2e",{width:"auto",padding:"6px 12px",fontSize:12})}}>✏️</button>
+                <button onClick={()=>{ if(confirm("¿Eliminar cliente?")) save.eliminarCliente(c.id); }}
+                  style={{...S.btn("#e53e3e",undefined,{width:"auto",padding:"6px 12px",fontSize:12})}}>🗑</button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── TAB PRODUCTOS ────────────────────────────────
+function TabProductos({productos,save}) {
+  const [form,setForm]=useState(null);
+  const [subiendo,setSubiendo]=useState(false);
+  const fotoRef=useRef();
+  const empty={id:"",nombre:"",precio:0,unidad:"kilo",activo:true,foto:null};
+
+  const guardar = async () => {
+    if (!form.nombre || !form.precio) return alert("Nombre y precio son obligatorios");
+    const id = form.id || form.nombre.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"");
+    await save.agregarProducto({...form, id});
+    setForm(null);
+  };
+
+  const subirFoto = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSubiendo(true);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      // Comprimir la imagen antes de guardar
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX = 400;
+        let w = img.width, h = img.height;
+        if (w > h) { if (w > MAX) { h = h*(MAX/w); w = MAX; } }
+        else { if (h > MAX) { w = w*(MAX/h); h = MAX; } }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        const base64 = canvas.toDataURL("image/jpeg", 0.7);
+        setForm(f=>({...f, foto: base64}));
+        setSubiendo(false);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div>
+      <button onClick={()=>setForm(empty)}
+        style={{...S.btn("#f5c800","#7a1c2e"),marginBottom:14}}>+ Agregar Producto</button>
+
+      {form && (
+        <div style={{...S.card,padding:16,marginBottom:14,border:"2px solid #f5c800"}} className="fade">
+          <strong style={{display:"block",marginBottom:12,color:"#7a1c2e"}}>
+            {form.id ? "Editar Producto" : "Nuevo Producto"}
+          </strong>
+
+          {/* FOTO */}
+          <div style={{marginBottom:12,textAlign:"center"}}>
+            <div onClick={()=>fotoRef.current.click()}
+              style={{width:120,height:100,margin:"0 auto 8px",borderRadius:12,overflow:"hidden",
+                border:"2px dashed #f5c800",background:"#fdf8ee",cursor:"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {form.foto
+                ? <img src={form.foto} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                : <div style={{textAlign:"center",color:"#bbb"}}>
+                    <div style={{fontSize:28}}>📷</div>
+                    <div style={{fontSize:11}}>Toca para subir foto</div>
+                  </div>
+              }
+            </div>
+            <input ref={fotoRef} type="file" accept="image/*"
+              onChange={subirFoto} style={{display:"none"}}/>
+            <button onClick={()=>fotoRef.current.click()}
+              style={{...S.btn("#f5c800","#7a1c2e",{width:"auto",padding:"6px 16px",fontSize:12})}}>
+              {subiendo?"⏳ Procesando...":"📷 "+(form.foto?"Cambiar foto":"Subir foto")}
+            </button>
+            {form.foto&&(
+              <button onClick={()=>setForm(f=>({...f,foto:null}))}
+                style={{...S.btn("#eee","#999",{width:"auto",padding:"6px 12px",fontSize:11,marginLeft:6})}}>
+                ✕ Quitar
+              </button>
+            )}
+          </div>
+
+          <input placeholder="Nombre del producto" value={form.nombre}
+            onChange={e=>setForm({...form,nombre:e.target.value})} style={{...S.input,marginBottom:8}}/>
+          <input type="number" placeholder="Precio ($)" value={form.precio}
+            onChange={e=>setForm({...form,precio:Number(e.target.value)})} style={{...S.input,marginBottom:8}}/>
+          <select value={form.unidad} onChange={e=>setForm({...form,unidad:e.target.value})}
+            style={{...S.input,marginBottom:8}}>
+            <option value="kilo">Por kilo</option>
+            <option value="unidad">Por unidad</option>
+            <option value="docena">Por docena</option>
+          </select>
+          <label style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,fontSize:13,color:"#555"}}>
+            <input type="checkbox" checked={form.activo} onChange={e=>setForm({...form,activo:e.target.checked})}/>
+            Activo (visible para clientes)
+          </label>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={guardar} style={S.btn()}>💾 Guardar</button>
+            <button onClick={()=>setForm(null)} style={S.btn("#eee","#666")}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {productos.map(p=>(
+        <div key={p.id} style={{...S.card,opacity:p.activo?1:0.6}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px"}}>
+            <div style={{width:70,height:60,flexShrink:0,borderRadius:10,overflow:"hidden",background:"#fdf8ee",
+              display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {p.foto
+                ? <img src={p.foto} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                : (IMGS[p.id]||<span style={{fontSize:26}}>🍞</span>)
+              }
+            </div>
+            <div style={{flex:1}}>
+              <strong style={{fontSize:14,color:"#3a1a08"}}>{p.nombre}</strong>
+              <div style={{fontSize:13,color:"#7a1c2e",fontWeight:"bold"}}>
+                ${Number(p.precio).toLocaleString("es-CL")} / {p.unidad}
+              </div>
+              <span style={S.tag(p.activo?"#38a169":"#aaa")}>{p.activo?"● Activo":"○ Inactivo"}</span>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>setForm({...p})}
+                style={{...S.btn("#f5c800","#7a1c2e",{width:"auto",padding:"6px 12px",fontSize:12})}}>✏️</button>
+              <button onClick={()=>{ if(confirm("¿Eliminar?")) save.eliminarProducto(p.id); }}
+                style={{...S.btn("#e53e3e",undefined,{width:"auto",padding:"6px 12px",fontSize:12})}}>🗑</button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── TAB CAJA ────────────────────────────────
+function TabCaja({pedidos,gastos,save}) {
+  const [form,setForm]=useState(false);
+  const [desc,setDesc]=useState("");
+  const [monto,setMonto]=useState("");
+
+  const hoy = new Date().toDateString();
+  const ingresos = pedidos.filter(p=>p.estado==="recibido"&&new Date(p.fecha).toDateString()===hoy)
+    .reduce((s,p)=>s+p.total,0);
+  const egresosHoy = gastos.filter(g=>new Date(g.fecha).toDateString()===hoy)
+    .reduce((s,g)=>s+g.monto,0);
+  const neto = ingresos - egresosHoy;
+
+  const agregarGasto = async () => {
+    if (!desc || !monto) return;
+    await save.agregarGasto({descripcion:desc, monto:Number(monto), fecha:new Date().toISOString()});
+    setDesc(""); setMonto(""); setForm(false);
+  };
+
+  return (
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
+        {[
+          {label:"Ingresos Hoy",value:ingresos,color:"#38a169"},
+          {label:"Gastos Hoy",value:egresosHoy,color:"#e53e3e"},
+          {label:"Neto Hoy",value:neto,color:neto>=0?"#3182ce":"#e53e3e"},
+        ].map(x=>(
+          <div key={x.label} style={{background:"#fff",borderRadius:12,padding:"12px 10px",
+            textAlign:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.07)"}}>
+            <div style={{fontSize:10,color:"#aaa",marginBottom:4}}>{x.label}</div>
+            <div style={{fontSize:16,fontWeight:"bold",color:x.color}}>
+              ${x.value.toLocaleString("es-CL")}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={()=>setForm(!form)}
+        style={{...S.btn("#e53e3e"),marginBottom:10}}>+ Registrar Gasto</button>
+
+      {form && (
+        <div style={{...S.card,padding:14,marginBottom:10,border:"2px solid #e53e3e"}} className="fade">
+          <input placeholder="Descripción del gasto" value={desc}
+            onChange={e=>setDesc(e.target.value)} style={{...S.input,marginBottom:8}}/>
+          <input type="number" placeholder="Monto ($)" value={monto}
+            onChange={e=>setMonto(e.target.value)} style={{...S.input,marginBottom:8}}/>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={agregarGasto} style={S.btn("#e53e3e")}>💾 Guardar</button>
+            <button onClick={()=>setForm(false)} style={S.btn("#eee","#666")}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      <strong style={{display:"block",margin:"12px 0 8px",color:"#7a1c2e",fontSize:13}}>Gastos recientes</strong>
+      {gastos.slice(0,20).map(g=>(
+        <div key={g.id} style={{...S.card,padding:"10px 14px",display:"flex",
+          justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:13,color:"#3a1a08"}}>{g.descripcion}</div>
+            <div style={{fontSize:11,color:"#aaa"}}>{new Date(g.fecha).toLocaleDateString("es-CL")}</div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <strong style={{color:"#e53e3e"}}>-${Number(g.monto).toLocaleString("es-CL")}</strong>
+            <button onClick={()=>{ if(confirm("¿Eliminar gasto?")) save.eliminarGasto(g.id); }}
+              style={{...S.btn("#eee","#999",{width:"auto",padding:"4px 10px",fontSize:11})}}>✕</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── TAB REPORTES ────────────────────────────────
+function TabReportes({pedidos,clientes}) {
+  const completados = pedidos.filter(p=>p.estado==="recibido");
+  const totalVentas = completados.reduce((s,p)=>s+p.total,0);
+  const totalPedidos = pedidos.length;
+  const pendientes = pedidos.filter(p=>p.estado==="pendiente").length;
+  const cancelados = pedidos.filter(p=>p.estado==="cancelado").length;
+
+  // Productos más vendidos
+  const conteo = {};
+  completados.forEach(p=>p.items?.forEach(i=>{
+    conteo[i.nombre]=(conteo[i.nombre]||0)+i.cantidad;
+  }));
+  const masVendidos = Object.entries(conteo).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  // Top clientes
+  const porCliente = {};
+  completados.forEach(p=>{
+    porCliente[p.clienteNombre]=(porCliente[p.clienteNombre]||0)+p.total;
+  });
+  const topClientes = Object.entries(porCliente).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  const stat = (label,value,color="#7a1c2e") => (
+    <div style={{background:"#fff",borderRadius:12,padding:14,textAlign:"center",
+      boxShadow:"0 2px 8px rgba(0,0,0,0.07)"}}>
+      <div style={{fontSize:11,color:"#aaa",marginBottom:4}}>{label}</div>
+      <div style={{fontSize:20,fontWeight:"bold",color}}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+        {stat("Total Ventas","$"+totalVentas.toLocaleString("es-CL"),"#38a169")}
+        {stat("Total Pedidos",totalPedidos)}
+        {stat("Clientes",clientes.length,"#3182ce")}
+        {stat("Cancelados",cancelados,"#e53e3e")}
+      </div>
+
+      {masVendidos.length>0&&<>
+        <strong style={{display:"block",margin:"0 0 8px",color:"#7a1c2e"}}>🏆 Más Vendidos</strong>
+        {masVendidos.map(([nombre,cant],i)=>(
+          <div key={nombre} style={{...S.card,padding:"10px 14px",display:"flex",
+            justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:13,color:"#3a1a08"}}>
+              {["🥇","🥈","🥉","4️⃣","5️⃣"][i]} {nombre}
+            </span>
+            <span style={{...S.tag("#f5c800","#7a4f00")}}>{cant} unid.</span>
+          </div>
+        ))}
+      </>}
+
+      {topClientes.length>0&&<>
+        <strong style={{display:"block",margin:"14px 0 8px",color:"#7a1c2e"}}>👑 Mejores Clientes</strong>
+        {topClientes.map(([nombre,total])=>(
+          <div key={nombre} style={{...S.card,padding:"10px 14px",display:"flex",
+            justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:13,color:"#3a1a08"}}>{nombre}</span>
+            <strong style={{color:"#38a169"}}>${total.toLocaleString("es-CL")}</strong>
+          </div>
+        ))}
+      </>}
+    </div>
+  );
+}
+
+// ─── TAB AJUSTES ────────────────────────────────
+function TabAjustes({config,save}) {
+  const [form,setForm]=useState({...config});
+  const [ok,setOk]=useState(false);
+  const [subiendoLogo,setSubiendoLogo]=useState(false);
+  const logoRef=useRef();
+
+  const guardar = async () => {
+    await save.actualizarConfig(form);
+    window.__logoUrl = form.logoUrl;
+    setOk(true);
+    setTimeout(()=>setOk(false),2000);
+  };
+
+  const subirLogo = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSubiendoLogo(true);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX = 300;
+        let w = img.width, h = img.height;
+        if (w > h) { if (w > MAX) { h = h*(MAX/w); w = MAX; } }
+        else { if (h > MAX) { w = w*(MAX/h); h = MAX; } }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        const base64 = canvas.toDataURL("image/jpeg", 0.8);
+        setForm(f=>({...f, logoUrl: base64}));
+        window.__logoUrl = base64;
+        setSubiendoLogo(false);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div>
+      <div style={S.card}>
+        <div style={{padding:16}}>
+          <strong style={{display:"block",marginBottom:14,color:"#7a1c2e"}}>🖼 Logo de la Panadería</strong>
+          <div style={{textAlign:"center",marginBottom:14}}>
+            <div onClick={()=>logoRef.current.click()}
+              style={{width:100,height:100,borderRadius:"50%",margin:"0 auto 10px",
+                overflow:"hidden",border:"3px dashed #f5c800",background:"#fdf8ee",
+                cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {form.logoUrl
+                ? <img src={form.logoUrl} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                : <Logo size={80}/>
+              }
+            </div>
+            <input ref={logoRef} type="file" accept="image/*"
+              onChange={subirLogo} style={{display:"none"}}/>
+            <button onClick={()=>logoRef.current.click()}
+              style={{...S.btn("#f5c800","#7a1c2e",{width:"auto",padding:"8px 18px",fontSize:13})}}>
+              {subiendoLogo?"⏳ Procesando...":"📷 "+(form.logoUrl?"Cambiar logo":"Subir logo")}
+            </button>
+            {form.logoUrl&&(
+              <button onClick={()=>{setForm(f=>({...f,logoUrl:null}));window.__logoUrl=null;}}
+                style={{...S.btn("#eee","#999",{width:"auto",padding:"8px 12px",fontSize:12,marginLeft:6})}}>
+                ✕ Quitar
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+      <div style={S.card}>
+        <div style={{padding:16}}>
+          <strong style={{display:"block",marginBottom:14,color:"#7a1c2e"}}>⚙️ Configuración General</strong>
+          {[
+            ["horario","Horario de atención","Lunes a Sábado 7:00 - 20:00"],
+            ["bienvenida","Mensaje de bienvenida","¡Bienvenidos!"],
+            ["telefono","Teléfono de contacto","+56 9 ..."],
+            ["adminPass","Contraseña administrador","****"],
+          ].map(([k,lbl,ph])=>(
+            <div key={k} style={{marginBottom:10}}>
+              <label style={{fontSize:12,color:"#888",display:"block",marginBottom:4}}>{lbl}</label>
+              <input placeholder={ph} value={form[k]||""}
+                onChange={e=>setForm({...form,[k]:e.target.value})}
+                type={k==="adminPass"?"password":"text"}
+                style={S.input}/>
+            </div>
+          ))}
+          <button onClick={guardar} style={{...S.btn(),marginTop:8}}>
+            {ok?"✅ Guardado en la nube":"💾 Guardar Cambios"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{...S.card,marginTop:10}}>
+        <div style={{padding:14}}>
+          <strong style={{display:"block",marginBottom:8,color:"#7a1c2e",fontSize:13}}>
+            🔥 Estado Firebase
+          </strong>
+          <div style={{fontSize:12,color:"#555",lineHeight:1.7}}>
+            <div>✅ Conectado a Firestore</div>
+            <div>✅ Sincronización en tiempo real activa</div>
+            <div style={{fontSize:11,color:"#aaa",marginTop:4}}>
+              Proyecto: panaderia-la-estrella
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// VISTA CLIENTE
+// ═══════════════════════════════════════════════
+function Cliente({cliente,productos,config,pedidos,notifs,onPedido,onConfirmarRecibido,onMarcarNotifLeida,onLogout}) {
+  const [tab,setTab]=useState("menu");
+  const [carrito,setCarrito]=useState({});
+  const [comentario,setComentario]=useState("");
+  const [horaEntrega,setHoraEntrega]=useState("");
+  const [enviando,setEnviando]=useState(false);
+  const [enviado,setEnviado]=useState(false);
+
+  const prods=productos.filter(p=>p.activo);
+  const totalItems=Object.values(carrito).reduce((s,v)=>s+v,0);
+  const totalPrecio=prods.reduce((s,p)=>s+(carrito[p.id]||0)*p.precio,0);
+
+  const cambiar=(id,delta)=>{
+    setCarrito(c=>({...c,[id]:Math.max(0,(c[id]||0)+delta)}));
+  };
+
+  const enviarPedido = async () => {
+    const items=prods.filter(p=>carrito[p.id]>0).map(p=>({
+      productoId:p.id, nombre:p.nombre, precio:p.precio,
+      cantidad:carrito[p.id], subtotal:carrito[p.id]*p.precio
+    }));
+    if(items.length===0) return;
+    setEnviando(true);
+    await onPedido(items, comentario, horaEntrega);
+    setCarrito({}); setComentario(""); setHoraEntrega("");
+    setEnviando(false); setEnviado(true);
+    setTimeout(()=>setEnviado(false),3000);
+    setTab("pedidos");
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#fdf8ee"}}>
+      <Header titulo={`Hola, ${cliente.nombre.split(" ")[0]}`}
+        sub="Panadería La Estrella" onLogout={onLogout}
+        badge={notifs.length}/>
+
+      {notifs.length>0&&notifs.filter(n=>n.tipo==="camino").map(n=>(
+        <div key={n.id} style={{background:"#ebf8ff",border:"2px solid #3182ce",
+          borderRadius:12,margin:12,padding:12,display:"flex",justifyContent:"space-between",alignItems:"center"}} className="fade">
+          <span style={{fontSize:13,color:"#2b6cb0"}}>🛵 <strong>¡Tu pedido va en camino!</strong></span>
+          <button onClick={()=>onMarcarNotifLeida(n.id)}
+            style={{...S.btn("#3182ce",undefined,{width:"auto",padding:"5px 12px",fontSize:11})}}>OK</button>
+        </div>
+      ))}
+
+      <div style={{display:"flex",background:"#fff",borderBottom:"2px solid #f5c800",
+        position:"sticky",top:62,zIndex:99}}>
+        {[["menu","🛒","Menú"],["pedidos","📋","Mis Pedidos"]].map(([id,icon,lbl])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:12,border:"none",
+            background:"transparent",borderBottom:tab===id?"3px solid #7a1c2e":"3px solid transparent",
+            color:tab===id?"#7a1c2e":"#999",fontWeight:tab===id?"bold":"normal",
+            cursor:"pointer",fontSize:13,fontFamily:"Georgia,serif"}}>
+            {icon} {lbl}
+            {id==="menu"&&totalItems>0&&(
+              <span style={{background:"#e53e3e",color:"#fff",borderRadius:"50%",
+                width:18,height:18,fontSize:10,display:"inline-flex",alignItems:"center",
+                justifyContent:"center",marginLeft:4,fontWeight:"bold"}}>{totalItems}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <div style={{padding:14,maxWidth:500,margin:"0 auto"}}>
+        {tab==="menu" && <>
+          <p style={{color:"#888",fontSize:12,marginBottom:12,fontStyle:"italic",textAlign:"center"}}>
+            {config.bienvenida}
+          </p>
+
+          {prods.map(p=>(
+            <div key={p.id} style={S.card} className="fade">
+              <div style={{display:"flex",alignItems:"center"}}>
+                <div style={{width:90,height:80,flexShrink:0,background:"#fdf8ee",
+                  borderRadius:"12px 0 0 12px",overflow:"hidden",
+                  display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {p.foto
+                    ? <img src={p.foto} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                    : (IMGS[p.id]||<span style={{fontSize:32}}>🍞</span>)
+                  }
+                </div>
+                <div style={{flex:1,padding:"10px 12px"}}>
+                  <strong style={{fontSize:15,color:"#3a1a08"}}>{p.nombre}</strong>
+                  <div style={{fontSize:13,color:"#7a1c2e",fontWeight:"bold",margin:"2px 0"}}>
+                    ${Number(p.precio).toLocaleString("es-CL")} / {p.unidad}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+                    <button onClick={()=>cambiar(p.id,-1)}
+                      style={{width:32,height:32,borderRadius:"50%",border:"2px solid #f5c800",
+                        background:"#fff",color:"#7a1c2e",fontSize:18,cursor:"pointer",
+                        display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"bold"}}>−</button>
+                    <span style={{fontSize:16,fontWeight:"bold",color:"#7a1c2e",minWidth:20,textAlign:"center"}}>
+                      {carrito[p.id]||0}
+                    </span>
+                    <button onClick={()=>cambiar(p.id,1)}
+                      style={{width:32,height:32,borderRadius:"50%",border:"none",
+                        background:"#f5c800",color:"#7a1c2e",fontSize:18,cursor:"pointer",
+                        display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"bold"}}>+</button>
+                    {(carrito[p.id]||0)>0&&(
+                      <span style={{fontSize:12,color:"#38a169",fontWeight:"bold"}}>
+                        = ${((carrito[p.id]||0)*p.precio).toLocaleString("es-CL")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {totalItems>0&&(
+            <div style={{...S.card,border:"2px solid #f5c800",padding:16,marginTop:8}} className="fade">
+              <strong style={{display:"block",marginBottom:12,color:"#7a1c2e",fontSize:15}}>
+                🛒 Tu pedido
+              </strong>
+              {prods.filter(p=>carrito[p.id]>0).map(p=>(
+                <div key={p.id} style={{display:"flex",justifyContent:"space-between",
+                  marginBottom:4,fontSize:13,color:"#555"}}>
+                  <span>{p.nombre} ×{carrito[p.id]}</span>
+                  <span style={{color:"#7a1c2e",fontWeight:"bold"}}>
+                    ${(carrito[p.id]*p.precio).toLocaleString("es-CL")}
+                  </span>
+                </div>
+              ))}
+              <div style={{borderTop:"2px solid #f5c800",marginTop:8,paddingTop:8,
+                display:"flex",justifyContent:"space-between",fontWeight:"bold",fontSize:15}}>
+                <span>Total</span>
+                <span style={{color:"#7a1c2e"}}>${totalPrecio.toLocaleString("es-CL")}</span>
+              </div>
+              <input placeholder="🕐 Hora de entrega (ej: 13:30)" value={horaEntrega}
+                onChange={e=>setHoraEntrega(e.target.value)} style={{...S.input,marginTop:12,marginBottom:8}}/>
+              <textarea placeholder="💬 Comentarios (opcional)" value={comentario}
+                onChange={e=>setComentario(e.target.value)}
+                style={{...S.input,height:60,resize:"none",marginBottom:10}}/>
+              <button onClick={enviarPedido} disabled={enviando}
+                style={{...S.btn("#7a1c2e",undefined,{fontSize:16,padding:16})}}>
+                {enviando?"⏳ Enviando...":"🛒 Confirmar Pedido →"}
+              </button>
+            </div>
+          )}
+
+          {enviado&&(
+            <div style={{background:"#f0fff4",border:"2px solid #38a169",borderRadius:14,
+              padding:16,textAlign:"center",marginTop:10}} className="fade">
+              <div style={{fontSize:36}}>✅</div>
+              <strong style={{color:"#38a169"}}>¡Pedido enviado!</strong>
+              <p style={{fontSize:13,color:"#555",marginTop:4}}>
+                Te avisaremos cuando vaya en camino
+              </p>
+            </div>
+          )}
+        </>}
+
+        {tab==="pedidos" && <>
+          {pedidos.length===0&&(
+            <div style={{textAlign:"center",color:"#bbb",padding:48,fontSize:14}}>
+              Aún no tienes pedidos
+            </div>
+          )}
+          {pedidos.map(p=>{
+            const est=ESTADOS[p.estado]||ESTADOS.pendiente;
+            return (
+              <div key={p.id} style={S.card} className="fade">
+                <div style={{background:est.color,padding:"8px 14px",display:"flex",
+                  justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{color:est.txt,fontWeight:"bold",fontSize:13}}>{est.icon} {est.label}</span>
+                  <span style={{color:est.txt,fontSize:11,opacity:0.85}}>
+                    {new Date(p.fecha).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}
+                  </span>
+                </div>
+                <div style={{padding:"12px 14px"}}>
+                  <div style={{fontSize:13,color:"#555",marginBottom:6}}>
+                    {p.items?.map((i,idx)=>(
+                      <span key={idx} style={{display:"inline-block",background:"#fdf8ee",
+                        borderRadius:6,padding:"2px 8px",margin:"2px",border:"1px solid #f5c800"}}>
+                        {i.nombre} ×{i.cantidad}
+                      </span>
+                    ))}
+                  </div>
+                  <strong style={{color:"#7a1c2e"}}>${p.total?.toLocaleString("es-CL")}</strong>
+                  {p.estado==="camino"&&(
+                    <button onClick={()=>onConfirmarRecibido(p.id)}
+                      style={{...S.btn("#38a169",undefined,{marginTop:10})}}>
+                      ✅ Confirmar que lo recibí
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App/>);
+</script>
+</body>
+</html>
